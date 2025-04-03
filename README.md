@@ -218,7 +218,6 @@ echo -n "user" | docker secret create PGUSER -
 echo -n "codeplatform" | docker secret create POSTGRES_DB -
 echo -n "password" | docker secret create POSTGRES_PASSWORD -
 echo -n "user" | docker secret create POSTGRES_USER -
-echo -n "postgres://user:password@database:5432/codeplatform" | docker secret create DATABASE_URL -
 ```
 
 See [Docker secret](https://docs.docker.com/reference/cli/docker/secret/) for creating secrets.
