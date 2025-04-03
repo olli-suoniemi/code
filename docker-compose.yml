@@ -217,6 +217,3 @@ secrets:
     file: ./.secrets/FLYWAY_PASSWORD
   FLYWAY_URL:
     file: ./.secrets/FLYWAY_URL
-    
-  DATABASE_URL:
-    file: ./.secrets/DATABASE_URL
