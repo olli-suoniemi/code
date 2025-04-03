@@ -203,8 +203,6 @@ secrets:
     external: true
   PGPORT:
     external: true
-  DATABASE_URL:
-    external: true
 
   POSTGRES_USER:
     external: true
