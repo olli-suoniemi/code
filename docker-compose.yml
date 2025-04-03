@@ -1,0 +1,222 @@
+version: "3.4"
+
+volumes:
+  astro_node_modules:
+  db-data:
+
+networks:
+  public:
+    driver: bridge
+
+services:
+  traefik:
+    image: traefik:v3.1
+    command:
+      - --providers.file.filename=/traefik_dynamic_conf.yml
+      - --api.dashboard=true
+      - --api.insecure=false  
+      - --log.level=INFO # DEBUG, INFO
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "./traefik_dynamic_conf.yml:/traefik_dynamic_conf.yml"
+      - "./ui.localhost.pem:/ui.localhost.pem"
+      - "./ui.localhost-key.pem:/ui.localhost-key.pem"
+      - "./api.localhost.pem:/api.localhost.pem"
+      - "./api.localhost-key.pem:/api.localhost-key.pem"
+      - "./ws.localhost.pem:/ws.localhost.pem"
+      - "./ws.localhost-key.pem:/ws.localhost-key.pem"
+    networks:
+      - public
+
+  programming-api:
+    build: 
+      context: ./programming-api
+      dockerfile: Dockerfile
+    volumes:  
+      - ./programming-api/:/app
+      - ./app-cache/:/app-cache
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=Host(`api.localhost`)"
+      - "traefik.http.routers.api.entrypoints=websecure"
+      - "traefik.http.routers.api.tls=true"
+      - "traefik.http.services.api.loadbalancer.server.port=7777"
+
+      - "traefik.http.routers.api-web.rule=Host(`api.localhost`)"
+      - "traefik.http.routers.api-web.entrypoints=web"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.routers.api-web.middlewares=redirect-to-https"
+    environment:
+      PGUSER_FILE: /run/secrets/PGUSER
+      PGPASSWORD_FILE: /run/secrets/PGPASSWORD
+      PGDATABASE_FILE: /run/secrets/PGDATABASE
+      PGHOST_FILE: /run/secrets/PGHOST
+      PGPORT_FILE: /run/secrets/PGPORT
+    secrets:
+      - PGUSER
+      - PGPASSWORD
+      - PGDATABASE
+      - PGHOST
+      - PGPORT
+    depends_on:
+      - database
+      - flyway
+      - redis
+    networks:
+      - public
+
+  programming-ui:
+    build: 
+      context: ./programming-ui
+      dockerfile: Dockerfile
+    volumes:  
+      - ./programming-ui/:/app
+      - astro_node_modules:/app/node_modules
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ui.rule=Host(`ui.localhost`)"
+      - "traefik.http.routers.ui.entrypoints=websecure"
+      - "traefik.http.routers.ui.tls=true"
+      - "traefik.http.services.ui.loadbalancer.server.port=3000"
+
+      - "traefik.http.routers.ui-web.rule=Host(`ui.localhost`)"
+      - "traefik.http.routers.ui-web.entrypoints=web"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.routers.ui-web.middlewares=redirect-to-https"
+    depends_on:
+      - programming-api
+    networks:
+      - public
+
+  grader-api:
+    build: 
+      context: ./grader-api
+      dockerfile: Dockerfile
+    volumes:  
+      - ./grader-api/:/app
+      - ./app-cache/:/app-cache
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    environment:
+      PGUSER_FILE: /run/secrets/PGUSER
+      PGPASSWORD_FILE: /run/secrets/PGPASSWORD
+      PGDATABASE_FILE: /run/secrets/PGDATABASE
+      PGHOST_FILE: /run/secrets/PGHOST
+      PGPORT_FILE: /run/secrets/PGPORT
+    secrets:
+      - PGUSER
+      - PGPASSWORD
+      - PGDATABASE
+      - PGHOST
+      - PGPORT
+    depends_on:
+      - programming-api
+      - redis
+      - database
+    networks:
+      - public
+
+  websocket:
+    build: 
+      context: ./websocket
+      dockerfile: Dockerfile
+    volumes:  
+      - ./websocket/:/app  
+    labels:
+      - "traefik.enable=true"
+
+      # WebSocket route (secure)
+      - "traefik.http.routers.ws.rule=Host(`ws.localhost`)"
+      - "traefik.http.routers.ws.entrypoints=websecure"
+      - "traefik.http.routers.ws.tls=true"
+      - "traefik.http.services.ws.loadbalancer.server.port=7788"
+
+      # WebSocket route (non-secure)
+      - "traefik.http.routers.ws-web.rule=Host(`ws.localhost`)"
+      - "traefik.http.routers.ws-web.entrypoints=web"
+      - "traefik.http.middlewares.redirect-to-https.redirectscheme.scheme=https"
+      - "traefik.http.routers.ws-web.middlewares=redirect-to-https"
+
+      # Enable WebSocket headers
+      - "traefik.http.middlewares.websocket.headers.customrequestheaders.Connection=Upgrade"
+      - "traefik.http.middlewares.websocket.headers.customrequestheaders.Upgrade=websocket"
+
+      # Attach middleware to WebSocket service
+      - "traefik.http.routers.ws.middlewares=websocket"
+
+    depends_on:
+      - redis
+    networks:
+      - public
+
+  database:
+    image: postgres:16.1
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: devdb
+    ports:
+      - "5432:5432"
+    networks:
+      - public
+
+  flyway:
+    build:
+      context: ./flyway
+      dockerfile: Dockerfile
+    depends_on:
+      - database
+    volumes:
+      - ./flyway/sql:/flyway/sql
+    environment:
+      FLYWAY_USER_FILE: /run/secrets/FLYWAY_USER
+      FLYWAY_PASSWORD_FILE: /run/secrets/FLYWAY_PASSWORD
+      FLYWAY_URL_FILE: /run/secrets/FLYWAY_URL
+    secrets:
+      - FLYWAY_USER
+      - FLYWAY_PASSWORD
+      - FLYWAY_URL
+    networks:
+      - public
+      
+  redis:
+    image: redis:7.2
+    command: >
+      redis-server --maxmemory 500mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+    ports:
+      - "6379:6379"
+    networks:
+      - public
+
+secrets:
+  PGUSER:
+    file: ./.secrets/PGUSER
+  PGPASSWORD:
+    file: ./.secrets/PGPASSWORD
+  PGDATABASE:
+    file: ./.secrets/PGDATABASE
+  PGHOST:
+    file: ./.secrets/PGHOST
+  PGPORT:
+    file: ./.secrets/PGPORT
+
+  FLYWAY_USER:
+    file: ./.secrets/FLYWAY_USER
+  FLYWAY_PASSWORD:
+    file: ./.secrets/FLYWAY_PASSWORD
+  FLYWAY_URL:
+    file: ./.secrets/FLYWAY_URL
+    
+  DATABASE_URL:
+    file: ./.secrets/DATABASE_URL

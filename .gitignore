@@ -1,0 +1,8 @@
+app-cache/
+grader-api/node_modules
+grader-api/package-lock.json
+grader-api/result*
+project.env
+e2e-playwright/node_modules
+*.pem
+.secrets

@@ -1,0 +1,9 @@
+# Manual TLS (self-signed certificate setup)
+tls:
+  certificates:
+    - certFile: /ui.localhost.pem
+      keyFile: /ui.localhost-key.pem
+    - certFile: /api.localhost.pem
+      keyFile: /api.localhost-key.pem
+    - certFile: /ws.localhost.pem
+      keyFile: /ws.localhost-key.pem

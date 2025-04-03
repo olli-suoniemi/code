@@ -1,0 +1,227 @@
+version: "3.9"
+
+services:
+  programming-ui:
+    image: ghcr.io/olli-suoniemi/code-platform/programming-ui:latest
+    depends_on:
+      - programming-api
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.programming-ui.rule=Host(`challenges.olli.codes`)"
+      - "traefik.http.routers.programming-ui.entrypoints=websecure"
+      - "traefik.http.routers.programming-ui.tls.certresolver=myresolver"
+      - "traefik.http.services.programming-ui.loadbalancer.server.port=3000"
+
+      # Define HSTS middleware
+      - "traefik.http.middlewares.hsts.headers.stsSeconds=31536000"
+      - "traefik.http.middlewares.hsts.headers.stsIncludeSubdomains=true"
+      - "traefik.http.middlewares.hsts.headers.stsPreload=true"
+
+      # Attach HSTS middleware to this router
+      - "traefik.http.routers.programming-ui.middlewares=hsts"
+    networks:
+      - internal
+      - proxy
+    deploy:
+      update_config:
+        order: start-first
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 30s
+
+  programming-api:
+    image: ghcr.io/olli-suoniemi/code-platform/programming-api:latest
+    depends_on:
+      - database
+      - flyway
+      - redis
+    environment:
+      PGUSER_FILE: /run/secrets/PGUSER
+      PGPASSWORD_FILE: /run/secrets/PGPASSWORD
+      PGDATABASE_FILE: /run/secrets/PGDATABASE
+      PGHOST_FILE: /run/secrets/PGHOST
+      PGPORT_FILE: /run/secrets/PGPORT
+    secrets:
+      - PGUSER
+      - PGPASSWORD
+      - PGDATABASE
+      - PGHOST
+      - PGPORT
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.programming-api.rule=Host(`challenges.olli.codes`) && PathPrefix(`/api`)"
+      - "traefik.http.middlewares.programming-api-stripprefix.stripprefix.prefixes=/api"
+      - "traefik.http.routers.programming-api.middlewares=programming-api-stripprefix"
+      - "traefik.http.routers.programming-api.entrypoints=websecure"
+      - "traefik.http.routers.programming-api.tls.certresolver=myresolver"
+      - "traefik.http.services.programming-api.loadbalancer.server.port=7777"
+    networks:
+      - internal
+      - proxy
+    deploy:
+      update_config:
+        order: start-first
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 30s
+
+  websocket:
+    image: ghcr.io/olli-suoniemi/code-platform/websocket:latest
+    depends_on:
+      - redis
+    networks:
+      - internal
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.websocket.rule=Host(`challenges.olli.codes`) && PathPrefix(`/ws`)"
+      - "traefik.http.middlewares.ws-stripprefix.stripprefix.prefixes=/ws"
+      - "traefik.http.routers.websocket.middlewares=ws-stripprefix"
+      - "traefik.http.services.websocket.loadbalancer.server.port=7788"
+      - "traefik.http.routers.websocket.entrypoints=websecure"
+      - "traefik.http.routers.websocket.tls.certresolver=myresolver"
+
+  grader-api:
+    image: ghcr.io/olli-suoniemi/code-platform/grader-api:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - programming-api
+      - redis
+      - database
+    environment:
+      PGUSER_FILE: /run/secrets/PGUSER
+      PGPASSWORD_FILE: /run/secrets/PGPASSWORD
+      PGDATABASE_FILE: /run/secrets/PGDATABASE
+      PGHOST_FILE: /run/secrets/PGHOST
+      PGPORT_FILE: /run/secrets/PGPORT
+    secrets:
+      - PGUSER
+      - PGPASSWORD
+      - PGDATABASE
+      - PGHOST
+      - PGPORT
+    networks:
+      - internal 
+    deploy:
+      update_config:
+        order: start-first
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 30s
+
+  grader-image:
+    image: ghcr.io/olli-suoniemi/code-platform/grader-image:latest
+    depends_on:
+      - grader-api
+    networks:
+      - internal 
+    deploy:
+      update_config:
+        order: start-first
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 30s
+        
+  redis:
+    image: redis:latest
+    command: >
+      redis-server --maxmemory 500mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+    networks:
+      - internal
+
+  database:
+    image: postgres:16.1
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    secrets:
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB
+      - PGUSER
+    environment:
+      POSTGRES_USER_FILE: /run/secrets/POSTGRES_USER
+      POSTGRES_PASSWORD_FILE: /run/secrets/POSTGRES_PASSWORD
+      POSTGRES_DB_FILE: /run/secrets/POSTGRES_DB
+      PGUSER_FILE: /run/secrets/PGUSER
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -d `cat $$POSTGRES_DB_FILE` -U `cat $$PGUSER_FILE`" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  flyway:
+    image: ghcr.io/olli-suoniemi/code-platform/flyway:latest
+    depends_on:
+      - database
+    environment:
+      FLYWAY_USER_FILE: /run/secrets/FLYWAY_USER
+      FLYWAY_PASSWORD_FILE: /run/secrets/FLYWAY_PASSWORD
+      FLYWAY_URL_FILE: /run/secrets/FLYWAY_URL
+    secrets:
+      - FLYWAY_USER
+      - FLYWAY_PASSWORD
+      - FLYWAY_URL
+    networks:
+      - internal
+    deploy:
+      restart_policy:
+        condition: none 
+
+volumes:
+  astro_node_modules:
+  db-data:
+  letsencrypt:
+  flyway-sql:
+    driver: local 
+
+secrets:
+  PGUSER:
+    external: true
+  PGPASSWORD:
+    external: true
+  PGDATABASE:
+    external: true
+  PGHOST:
+    external: true
+  PGPORT:
+    external: true
+  DATABASE_URL:
+    external: true
+
+  POSTGRES_USER:
+    external: true
+  POSTGRES_PASSWORD:
+    external: true
+  POSTGRES_DB:
+    external: true
+
+  FLYWAY_USER:
+    external: true
+  FLYWAY_PASSWORD:
+    external: true
+  FLYWAY_URL:
+    external: true 
+
+networks:
+  proxy:
+    external: true
+  internal:
+    driver: overlay
